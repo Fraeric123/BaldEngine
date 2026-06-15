@@ -6,7 +6,7 @@ export class PhysicInstance extends Object3DInstance {
     constructor() {
         super();
 
-        this.aabb = new AABB();
+        this.aabb = new AABB(0, 0, 0, 0, 0, 0);
 
         this.type = "physical"
     }

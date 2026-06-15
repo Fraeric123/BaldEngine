@@ -1,0 +1,995 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+        content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+    <title>Engine</title>
+</head>
+
+<body>
+    <script type="module">
+        import { GLTFLoader } from "./libs/GLTFLoader.js"
+        import { RGBELoader } from "./libs/RGBELoader.js"
+        import * as THREE from "./libs/three.module.js"
+
+        export class Asset {
+            constructor(name, src, type = null) {
+                this.name = name;
+                this.src = src;
+                this.type = type;
+                this.data = null;
+                this.loaded = false;
+            }
+        }
+
+        export class AssetList {
+            constructor(assets = []) {
+                this.assets = assets;
+            }
+
+            addAsset(asset) {
+                this.assets.push(asset);
+                return this;
+            }
+
+            removeAsset(asset) {
+                const index = this.assets.indexOf(asset);
+                if (index > -1) {
+                    this.assets.splice(index, 1);
+                }
+                return this;
+            }
+
+            getAssets() {
+                return this.assets;
+            }
+
+            getAssetsByType(type) {
+                return this.assets.filter(asset => asset.type === type);
+            }
+
+            getAssetByName(name, type = null) {
+                return this.assets.find(asset => {
+                    if (type) {
+                        return asset.name === name && asset.type === type;
+                    }
+                    return asset.name === name;
+                });
+            }
+
+            getAssetBySrc(src) {
+                return this.assets.find(asset => asset.src === src);
+            }
+        }
+
+        export class AABB {
+            constructor(x0, y0, z0, x1, y1, z1) {
+                this.epsilon = 0.001;
+                this.x0 = x0;
+                this.y0 = y0;
+                this.z0 = z0;
+                this.x1 = x1;
+                this.y1 = y1;
+                this.z1 = z1;
+            }
+
+            getCenter() {
+                return new THREE.Vector3((this.x0 + this.x1) / 2, (this.y0 + this.y1) / 2, (this.z0 + this.z1) / 2);
+            }
+
+            expand(xa, ya, za) {
+                let _x0 = this.x0, _y0 = this.y0, _z0 = this.z0;
+                let _x1 = this.x1, _y1 = this.y1, _z1 = this.z1;
+                if (xa < 0.0) _x0 += xa;
+                if (xa > 0.0) _x1 += xa;
+                if (ya < 0.0) _y0 += ya;
+                if (ya > 0.0) _y1 += ya;
+                if (za < 0.0) _z0 += za;
+                if (za > 0.0) _z1 += za;
+                return new AABB(_x0, _y0, _z0, _x1, _y1, _z1);
+            }
+
+            intersects(other) {
+                if (other.x1 <= this.x0 || other.x0 >= this.x1) return false;
+                if (other.y1 <= this.y0 || other.y0 >= this.y1) return false;
+                if (other.z1 <= this.z0 || other.z0 >= this.z1) return false;
+                return true;
+            }
+
+            clipXCollide(c, xa) {
+                if (c.y1 <= this.y0 || c.y0 >= this.y1) return xa;
+                if (c.z1 <= this.z0 || c.z0 >= this.z1) return xa;
+                if (xa > 0.0 && c.x1 <= this.x0) {
+                    let max = this.x0 - c.x1 - this.epsilon;
+                    if (max < xa) xa = max;
+                }
+                if (xa < 0.0 && c.x0 >= this.x1) {
+                    let max = this.x1 - c.x0 + this.epsilon;
+                    if (max > xa) xa = max;
+                }
+                return xa;
+            }
+
+            clipYCollide(c, ya) {
+                if (c.x1 <= this.x0 || c.x0 >= this.x1) return ya;
+                if (c.z1 <= this.z0 || c.z0 >= this.z1) return ya;
+                if (ya > 0.0 && c.y1 <= this.y0) {
+                    let max = this.y0 - c.y1 - this.epsilon;
+                    if (max < ya) ya = max;
+                }
+                if (ya < 0.0 && c.y0 >= this.y1) {
+                    let max = this.y1 - c.y0 + this.epsilon;
+                    if (max > ya) ya = max;
+                }
+                return ya;
+            }
+
+            clipZCollide(c, za) {
+                if (c.x1 <= this.x0 || c.x0 >= this.x1) return za;
+                if (c.y1 <= this.y0 || c.y0 >= this.y1) return za;
+                if (za > 0.0 && c.z1 <= this.z0) {
+                    let max = this.z0 - c.z1 - this.epsilon;
+                    if (max < za) za = max;
+                }
+                if (za < 0.0 && c.z0 >= this.z1) {
+                    let max = this.z1 - c.z0 + this.epsilon;
+                    if (max > za) za = max;
+                }
+                return za;
+            }
+
+            move(dx, dy, dz) {
+                this.x0 += dx; this.y0 += dy; this.z0 += dz;
+                this.x1 += dx; this.y1 += dy; this.z1 += dz;
+            }
+        }
+
+        export class Instance {
+            constructor() {
+                this.world = null;
+
+                this.uuid = THREE.MathUtils.generateUUID();
+
+                this.parent = null;
+                this.children = [];
+
+                this.type = "abstract";
+            }
+
+            addedToWorld(world) {
+                this.world = world;
+            }
+
+            addChild(child) {
+                this.children.push(child);
+                child.parent = this;
+                child.addedToWorld(this.world);
+            }
+
+            removeChild(child) {
+                const index = this.children.indexOf(child);
+                if (index !== -1) {
+                    this.children.splice(index, 1);
+                    child.parent = null;
+                    child.world = null;
+                }
+            }
+
+            removeChildByUUID(uuid) {
+                const child = this.children.find(child => child.uuid === uuid);
+                if (child) {
+                    this.removeChild(child);
+                }
+            }
+
+            removeChildByIndex(index) {
+                if (index >= 0 && index < this.children.length) {
+                    const child = this.children[index];
+                    this.removeChild(child);
+                }
+            }
+
+            getChildByUUID(uuid) {
+                return this.children.find(child => child.uuid === uuid);
+            }
+
+            getChildren() {
+                return this.children;
+            }
+
+            getDecendants() {
+                let decendants = [];
+                for (const child of this.children) {
+                    decendants.push(child);
+                    decendants = decendants.concat(child.getDecendants());
+                }
+                return decendants;
+            }
+
+            remove() {
+                for (const child of this.children) {
+                    child.remove();
+                }
+                this.children = [];
+                return true;
+            }
+
+            render(dt) {
+                for (const child of this.children) {
+                    child.render(dt);
+                }
+            }
+
+            update(dt) {
+                for (const child of this.children) {
+                    child.update(dt);
+                }
+            }
+        }
+
+        export class Object3DInstance extends Instance {
+            constructor() {
+                super();
+
+                this.object3D = new THREE.Group();
+
+                this.type = "transformable";
+            }
+
+            addedToWorld(world) {
+                super.addedToWorld(world);
+                this.world.scene.add(this.object3D);
+            }
+
+            add(object3D) {
+                this.object3D.add(object3D);
+                return this;
+            }
+
+            set(object3D) {
+                this.object3D = object3D;
+                return this;
+            }
+
+            setPosition(x, y, z) {
+                this.object3D.position.set(x, y, z);
+                return this;
+            }
+
+            setRotation(x, y, z) {
+                this.object3D.rotation.set(x, y, z);
+                return this;
+            }
+
+            setScale(x, y, z) {
+                this.object3D.scale.set(x, y, z);
+                return this;
+            }
+
+            setSize(scalar) {
+                this.object3D.scale.set(this.object3D.scale.x * scalar, this.object3D.scale.y * scalar, this.object3D.scale.z * scalar);
+                return this;
+            }
+
+            render(dt) {
+                super.render(dt);
+            }
+
+            update(dt) {
+                super.update(dt);
+            }
+        }
+
+        export class PhysicInstance extends Object3DInstance {
+            constructor() {
+                super();
+
+                this.aabb = new AABB(0, 0, 0, 0, 0, 0);
+
+                this.type = "physical"
+            }
+
+            addedToWorld(world) {
+                super.addedToWorld(world);
+            }
+
+            render(dt) {
+                super.render(dt);
+            }
+
+            update(dt) {
+                super.update(dt);
+            }
+        }
+
+        export class BasePart extends PhysicInstance {
+            constructor() {
+                super();
+
+                this.color = 0xffffff;
+                this.texture = "debug";
+                this.u_size = 1.0;
+                this.v_size = 1.0;
+                this.u_offset = 0.0;
+                this.v_offset = 0.0;
+
+                this._currentTextureName = null;
+                this._currentTemplateTexture = null;
+                this._mesh = null;
+            }
+
+            addedToWorld(world) {
+                super.addedToWorld(world);
+
+                const boxGeometry = new THREE.BoxGeometry();
+                const boxMaterial = new THREE.MeshStandardMaterial({ color: this.color });
+
+                this._mesh = new THREE.Mesh(boxGeometry, boxMaterial);
+                this._mesh.name = "base_mesh";
+                this._mesh.position.set(0, 0, 0);
+
+                this.add(this._mesh);
+            }
+
+            syncVisuals() {
+                if (!this._mesh) return;
+
+                const material = this._mesh.material;
+
+                if (material.color.getHex() !== this.color) {
+                    material.color.setHex(this.color);
+                }
+
+                let targetTextureAsset = null;
+                if (this.world.engine && this.world.engine.assetManager) {
+                    targetTextureAsset = this.world.assetList.getAssetByName(this.texture, 'texture');
+                }
+
+                const targetTextureData = targetTextureAsset ? targetTextureAsset.data : null;
+
+                if (this._currentTextureName !== this.texture || this._currentTemplateTexture !== targetTextureData) {
+                    this._currentTextureName = this.texture;
+                    this._currentTemplateTexture = targetTextureData;
+
+                    if (material.map) {
+                        material.map.dispose();
+                    }
+
+                    if (targetTextureData) {
+                        const newTexture = targetTextureData.clone();
+                        newTexture.magFilter = THREE.NearestFilter;
+                        newTexture.minFilter = THREE.NearestMipmapLinearFilter;
+                        newTexture.wrapS = THREE.RepeatWrapping;
+                        newTexture.wrapT = THREE.RepeatWrapping;
+
+                        material.map = newTexture;
+                    } else {
+                        material.map = null;
+                    }
+                    material.needsUpdate = true;
+                }
+
+                if (material.map) {
+                    const map = material.map;
+
+                    if (map.repeat.x !== this.u_size || map.repeat.y !== this.v_size) {
+                        map.repeat.set(this.u_size, this.v_size);
+                    }
+
+                    if (map.offset.x !== this.u_offset || map.offset.y !== this.v_offset) {
+                        map.offset.set(this.u_offset, this.v_offset);
+                    }
+                }
+            }
+
+            setColor(color) {
+                this.color = color;
+            }
+
+            setTextureId(textureId) {
+                this.texture = textureId;
+            }
+
+            setUSize(size) {
+                this.u_size = size;
+            }
+
+            setVSize(size) {
+                this.v_size = size;
+            }
+
+            setUOffset(offset) {
+                this.u_offset = offset;
+            }
+
+            setVOffset(offset) {
+                this.v_offset = offset;
+            }
+
+            setU(size, offset) {
+                this.setUSize(size);
+                this.setUOffset(offset);
+            }
+
+            setV(size, offset) {
+                this.setVSize(size);
+                this.setVOffset(offset);
+            }
+
+            setUV(u_size, u_offset, v_size, v_offset) {
+                this.setU(u_size, u_offset);
+                this.setV(v_size, v_offset);
+            }
+
+            render(dt) {
+                this.syncVisuals();
+                super.render(dt);
+            }
+
+            update(dt) {
+                super.update(dt);
+            }
+        }
+
+        export class MeshPart extends PhysicInstance {
+            constructor() {
+                super();
+
+                this.meshId = "debug";
+                this.color = 0xffffff;
+                this.texture = "";
+                this.u_size = 1.0;
+                this.v_size = 1.0;
+                this.u_offset = 0.0;
+                this.v_offset = 0.0;
+
+                this.meshPositionOffset = new THREE.Vector3(0, 0, 0);
+                this.meshRotationOffset = new THREE.Vector3(0, 0, 0);
+
+                this._currentMeshId = null;
+                this._currentTemplateModel = null;
+                this._currentTextureName = null;
+                this._currentTemplateTexture = null;
+                this._currentMeshPositionOffset = null;
+                this._currentMeshRotationOffset = null;
+
+                this._modelContainer = null;
+            }
+
+            addedToWorld(world) {
+                super.addedToWorld(world);
+
+                this._modelContainer = new THREE.Group();
+                this.add(this._modelContainer);
+            }
+
+            syncVisuals() {
+                let targetModelAsset = null;
+                let targetTextureAsset = null;
+
+                if (this.world.engine && this.world.engine.assetManager) {
+                    targetModelAsset = this.world.assetList.getAssetByName(this.meshId, 'gltf');
+                    targetTextureAsset = this.world.assetList.getAssetByName(this.texture, 'texture');
+                }
+
+                const targetModelData = targetModelAsset ? targetModelAsset.data : null;
+                const targetTextureData = targetTextureAsset ? targetTextureAsset.data : null;
+
+                if (this._currentMeshId !== this.meshId || this._currentTemplateModel !== targetModelData) {
+                    this._currentMeshId = this.meshId;
+                    this._currentTemplateModel = targetModelData;
+
+                    while (this._modelContainer.children.length > 0) {
+                        this._modelContainer.remove(this._modelContainer.children[0]);
+                    }
+
+                    this._currentTextureName = null;
+
+                    if (targetModelData && targetModelData.scene) {
+                        const clonedScene = targetModelData.scene.clone();
+
+                        clonedScene.name = "base_mesh";
+
+                        clonedScene.traverse((child) => {
+                            if (child.isMesh) {
+                                child.material = new THREE.MeshStandardMaterial({
+                                    color: this.color
+                                });
+                            }
+                        });
+
+                        this._modelContainer.add(clonedScene);
+                    }
+                }
+
+                if (this._currentMeshPositionOffset !== this.meshPositionOffset || this._currentMeshRotationOffset !== this.meshRotationOffset) {
+                    this._modelContainer.children[0].position.set(this.meshPositionOffset.x, this.meshPositionOffset.y, this.meshPositionOffset.z);
+                    this._modelContainer.children[0].rotation.set(this.meshRotationOffset.x, this.meshRotationOffset.y, this.meshRotationOffset.z);
+                }
+
+                let textureChanged = this._currentTextureName !== this.texture || this._currentTemplateTexture !== targetTextureData;
+                if (textureChanged) {
+                    this._currentTextureName = this.texture;
+                    this._currentTemplateTexture = targetTextureData;
+                }
+
+                this._modelContainer.traverse((child) => {
+                    if (child.isMesh && child.material) {
+                        const material = child.material;
+
+                        if (material.color.getHex() !== this.color) {
+                            material.color.setHex(this.color);
+                        }
+
+                        if (textureChanged) {
+                            if (material.map) {
+                                material.map.dispose();
+                            }
+
+                            if (targetTextureData) {
+                                const newTexture = targetTextureData.clone();
+                                newTexture.magFilter = THREE.NearestFilter;
+                                newTexture.minFilter = THREE.NearestFilter;
+                                newTexture.wrapS = THREE.RepeatWrapping;
+                                newTexture.wrapT = THREE.RepeatWrapping;
+                                material.map = newTexture;
+                            } else {
+                                material.map = null;
+                            }
+                            material.needsUpdate = true;
+                        }
+
+                        if (material.map) {
+                            const map = material.map;
+                            if (map.repeat.x !== this.u_size || map.repeat.y !== this.v_size) {
+                                map.repeat.set(this.u_size, this.v_size);
+                            }
+                            if (map.offset.x !== this.u_offset || map.offset.y !== this.v_offset) {
+                                map.offset.set(this.u_offset, this.v_offset);
+                            }
+                        }
+                    }
+                });
+            }
+
+            setColor(color) {
+                this.color = color;
+            }
+
+            setTextureId(textureId) {
+                this.texture = textureId;
+            }
+
+            setMeshId(meshId) {
+                this.meshId = meshId;
+            }
+
+            setMeshPositionOffset(x, y, z) {
+                this.meshPositionOffset.set(x, y, z);
+            }
+
+            setMeshRotationOffset(x, y, z) {
+                this.meshRotationOffset.set(x, y, z);
+            }
+
+            setUSize(size) {
+                this.u_size = size;
+            }
+
+            setVSize(size) {
+                this.v_size = size;
+            }
+
+            setUOffset(offset) {
+                this.u_offset = offset;
+            }
+
+            setVOffset(offset) {
+                this.v_offset = offset;
+            }
+
+            setU(size, offset) {
+                this.setUSize(size);
+                this.setUOffset(offset);
+            }
+
+            setV(size, offset) {
+                this.setVSize(size);
+                this.setVOffset(offset);
+            }
+
+            setUV(u_size, u_offset, v_size, v_offset) {
+                this.setU(u_size, u_offset);
+                this.setV(v_size, v_offset);
+            }
+
+            render(dt) {
+                this.syncVisuals();
+                super.render(dt);
+            }
+
+            update(dt) {
+                super.update(dt);
+                
+                if (this.object3D) {
+                    this.object3D.rotation.y -= 2 * dt;
+                }
+            }
+        }
+
+        export class System {
+            constructor(world) {
+                this.world = world;
+            }
+
+            render(dt) {
+
+            }
+
+            update(dt) {
+
+            }
+        }
+
+        export class World {
+            constructor() {
+                this.engine = null;
+
+                this.assetList = null;
+
+                this.instances = [];
+
+                this.camera = null;
+                this.scene = new THREE.Scene();
+            }
+
+            init(engine) {
+                this.engine = engine;
+                this.assetList = engine.assetList;
+
+                this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+                this.camera.position.z = 5;
+                this.scene.add(this.camera);
+
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+                this.scene.add(ambientLight);
+
+                const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+                directionalLight.position.set(1, 1, 1);
+                this.scene.add(directionalLight);
+
+                this.addInstance(new BasePart()).setPosition(-2, 0, 0).setSize(2);
+
+                const customModel = new MeshPart();
+                customModel.meshId = "debug";
+                customModel.color = 0xff0000;
+                this.addInstance(customModel).setPosition(2, 0, 0).setSize(1);
+                
+                this.setSkyFromHDRI("debug");
+                this.setBrightness(0.5);
+            }
+
+            addInstance(instance) {
+                this.instances.push(instance);
+                instance.addedToWorld(this);
+                return instance;
+            }
+
+            removeInstance(instance) {
+                if (instance.remove()) {
+                    const index = this.instances.indexOf(instance);
+                    if (index > -1) {
+                        this.instances.splice(index, 1);
+                        instance.world = null;
+                    }
+                }
+            }
+            
+            setBrightness(num = 1.0) {
+                this.engine.renderer.toneMappingExposure = num;
+            }
+            
+            setSkyFromHDRI(assetId, type = "hdri") {
+                const asset = this.assetList.getAssetByName(assetId, type);
+                if (asset && asset.data) {
+                    const texture = asset.data;
+                    texture.mapping = THREE.EquirectangularReflectionMapping;
+                    this.scene.background = texture;
+                    this.scene.environment = texture;
+                }
+            }
+            
+            setSkyFromCubeMap(rightId, leftId, topId, bottomId, frontId, backId, type = 'texture') {
+                const assetIds = [
+                    rightId,
+                    leftId,
+                    topId,
+                    bottomId,
+                    frontId,
+                    backId
+                ];
+            
+                const images = [];
+            
+                for (let id of assetIds) {
+                    if (id == undefined) { id = "debug" }
+                    
+                    const asset = this.assetList.getAssetByName(id, type);
+            
+                    if (asset && asset.data) {
+                        images.push(asset.data.image || asset.data);
+                    } else {
+                        return;
+                    }
+                }
+            
+                const cubeTexture = new THREE.CubeTexture(images);
+                cubeTexture.needsUpdate = true;
+            
+                this.scene.background = cubeTexture;
+                this.scene.environment = cubeTexture;
+            }
+
+            render(dt) {
+                this.engine.renderer.render(this.scene, this.camera);
+
+                for (const instance of this.instances) {
+                    instance.render(dt);
+                }
+            }
+
+            update(dt) {
+                for (const instance of this.instances) {
+                    instance.update(dt);
+                }
+            }
+        }
+
+        export class Manager {
+            constructor(engine) {
+                this.engine = engine;
+            }
+        }
+
+        export class AssetManager extends Manager {
+            constructor(engine) {
+                super(engine);
+
+                this.engine = engine;
+
+                this.textureLoader = new THREE.TextureLoader();
+                this.soundLoader = new THREE.AudioLoader();
+                this.gltfLoader = new GLTFLoader();
+                this.rgbeLoader = new RGBELoader();
+
+                this.promises = [];
+                this.totalAssets = this.engine.assetList.getAssets().length;
+                this.loadedAssets = 0;
+            }
+
+            async loadAssets() {
+                this.totalAssets = this.engine.assetList.getAssets().length;
+                this.loadedAssets = 0;
+
+                const onProgress = (asset) => {
+                    this.loadedAssets++;
+                    const percent = (this.loadedAssets / this.totalAssets) * 100;
+                    console.log(`Loaded ${asset.name} ${asset.src} (${percent.toFixed(2)}%)`);
+                };
+
+                for (const asset of this.engine.assetList.getAssets()) {
+                    if (asset.loaded && asset.data) {
+                        onProgress(asset);
+                        continue;
+                    }
+                    const promise = new Promise((resolve, reject) => {
+                        if (asset.type === "texture") {
+                            this.textureLoader.load(asset.src, (data) => {
+                                asset.data = data;
+                                onProgress(asset);
+                                resolve();
+                            }, undefined, reject);
+                        } else if (asset.type === "gltf") {
+                            this.gltfLoader.load(asset.src, (data) => {
+                                asset.data = data;
+                                onProgress(asset);
+                                resolve();
+                            }, undefined, reject);
+                        } else if (asset.type === "hdri") {
+                            this.rgbeLoader.load(asset.src, (data) => {
+                                asset.data = data;
+                                onProgress(asset);
+                                resolve();
+                            }, undefined, reject);
+                        } else if (asset.type === "audio") {
+                            this.soundLoader.load(asset.src, (data) => {
+                                asset.data = data;
+                                onProgress(asset);
+                                resolve();
+                            }, undefined, reject);
+                        } else {
+                            reject(new Error(`Unsupported asset type: ${asset.type}`));
+                        }
+                    });
+                    this.promises.push(promise);
+                    await new Promise(r => setTimeout(r, 200));
+                }
+
+                await Promise.all(this.promises);
+
+                await new Promise(r => setTimeout(r, 200));
+            }
+        }
+
+        export class CanvasManager extends Manager {
+            constructor(engine) {
+                super(engine);
+
+                this.engine = engine;
+
+                this.renderWidth = 2560;
+                this.renderHeight = 1440;
+
+                this.GUICanvas = null;
+                this.RenderCanvas = null;
+                this.GUICanvasContext = null;
+            }
+
+            resize() {
+                const pixelRatio = window.devicePixelRatio || 1;
+                
+                const cssWidth = window.innerWidth;
+                const cssHeight = cssWidth * 9 / 16;
+            
+                [this.RenderCanvas, this.GUICanvas].forEach(canvas => {
+                    canvas.style.width = `${cssWidth}px`;
+                    canvas.style.height = `${cssHeight}px`;
+            
+                    canvas.width = Math.floor(cssWidth * pixelRatio);
+                    canvas.height = Math.floor(cssHeight * pixelRatio);
+                });
+            
+                if (this.engine.renderer) {
+                    this.engine.renderer.setPixelRatio(pixelRatio);
+                    this.engine.renderer.setSize(Math.floor(cssWidth), Math.floor(cssHeight), false);
+                }
+            
+                if (this.engine.world && this.engine.world.camera) {
+                    this.engine.world.camera.aspect = cssWidth / cssHeight;
+                    this.engine.world.camera.updateProjectionMatrix();
+                }
+            
+                const scaleX = (cssWidth * pixelRatio) / this.renderWidth;
+                const scaleY = (cssHeight * pixelRatio) / this.renderHeight;
+            
+                this.GUICanvasContext.setTransform(
+                    scaleX, 0,
+                    0, scaleY,
+                    0, 0
+                );
+            }
+
+
+            fix_canvas(canvas, zIndex) {
+                canvas.style.position = 'fixed';
+                canvas.style.zIndex = zIndex;
+                canvas.style.display = 'block';
+                canvas.style.top = '50%';
+                canvas.style.left = '50%';
+                canvas.style.transform = 'translate(-50%, -50%)';
+            }
+
+            init() {
+                document.body.style.margin = '0';
+                document.body.style.overflow = 'hidden';
+                document.body.style.backgroundColor = this.engine.bodyColor;
+
+                this.engine.GUICanvas = document.createElement('canvas');
+                this.engine.RenderCanvas = document.createElement('canvas');
+
+                this.GUICanvas = this.engine.GUICanvas;
+                this.RenderCanvas = this.engine.RenderCanvas;
+
+                document.body.appendChild(this.GUICanvas);
+                document.body.appendChild(this.RenderCanvas);
+
+                this.engine.renderer = new THREE.WebGLRenderer({
+                    canvas: this.RenderCanvas,
+                    antialias: true
+                });
+                
+                this.engine.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+
+                this.fix_canvas(this.engine.RenderCanvas, 0);
+                this.fix_canvas(this.engine.GUICanvas, 1);
+
+                this.GUICanvasContext = this.GUICanvas.getContext('2d');
+
+                this.RenderCanvas.style.pointerEvents = 'none';
+                this.GUICanvas.style.pointerEvents = 'auto';
+
+                this.GUICanvas.style.outline = '1px solid blue';
+
+                window.addEventListener('resize', this.resize.bind(this));
+
+                this.resize();
+            }
+
+            update(dt) {
+
+            }
+        }
+
+        export class Engine {
+            constructor({ startWorld = new World(), assetList = new AssetList() }) {
+                this.assetList = assetList;
+
+                this.world = startWorld;
+
+                this.assetManager = new AssetManager(this);
+                this.canvasManager = new CanvasManager(this);
+                this.inputManager = null;
+
+                this.renderer = null;
+
+                this.GUICanvas = null;
+                this.RenderCanvas = null;
+                this.GUICanvasContext = null;
+
+                this.worldUpdates = false;
+                this.worldRender = false;
+
+                this.bodyColor = '#000000';
+
+                this.lastTime = 0;
+            }
+
+            async init() {
+                this.canvasManager.init();
+
+                await this.assetManager.loadAssets();
+
+                this.world.init(this);
+
+                this.worldUpdates = true;
+                this.worldRender = true;
+
+                this.canvasManager.resize();
+
+                requestAnimationFrame(this.loop.bind(this));
+            }
+
+            render(dt) {
+                if (this.worldRender) {
+                    this.world.render(dt);
+                }
+            }
+
+            loop(time) {
+                const dt = (time - this.lastTime) / 1000;
+                this.lastTime = time;
+
+                if (this.worldUpdates) {
+                    this.world.update(dt);
+                }
+
+                this.canvasManager.update(dt);
+
+                this.render(dt);
+                requestAnimationFrame(this.loop.bind(this));
+            }
+        }
+
+        const engine = new Engine({});
+
+        engine.assetList.addAsset(new Asset('debug', './assets/textures/debug.png', 'texture'));
+        engine.assetList.addAsset(new Asset('debug', './assets/glb/debug.glb', 'gltf'));
+        engine.assetList.addAsset(new Asset('debug', './assets/hdr/sky.hdr', 'hdri'));
+
+        await engine.init();
+    </script>
+</body>
+
+</html>

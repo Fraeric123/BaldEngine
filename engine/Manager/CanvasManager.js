@@ -16,28 +16,31 @@ export class CanvasManager extends Manager {
     }
 
     resize() {
-        const width = window.innerWidth;
-        const height = width * 9 / 16;
+        const pixelRatio = window.devicePixelRatio || 1;
 
-        const scaleX = width / this.renderWidth;
-        const scaleY = height / this.renderHeight;
+        const cssWidth = window.innerWidth;
+        const cssHeight = cssWidth * 9 / 16;
 
         [this.RenderCanvas, this.GUICanvas].forEach(canvas => {
-            canvas.style.width = `${width}px`;
-            canvas.style.height = `${height}px`;
+            canvas.style.width = `${cssWidth}px`;
+            canvas.style.height = `${cssHeight}px`;
 
-            canvas.width = Math.floor(width);
-            canvas.height = Math.floor(height);
+            canvas.width = Math.floor(cssWidth * pixelRatio);
+            canvas.height = Math.floor(cssHeight * pixelRatio);
         });
 
         if (this.engine.renderer) {
-            this.engine.renderer.setSize(Math.floor(width), Math.floor(height), false);
+            this.engine.renderer.setPixelRatio(pixelRatio);
+            this.engine.renderer.setSize(Math.floor(cssWidth), Math.floor(cssHeight), false);
         }
 
         if (this.engine.world && this.engine.world.camera) {
-            this.engine.world.camera.aspect = width / height;
+            this.engine.world.camera.aspect = cssWidth / cssHeight;
             this.engine.world.camera.updateProjectionMatrix();
         }
+
+        const scaleX = (cssWidth * pixelRatio) / this.renderWidth;
+        const scaleY = (cssHeight * pixelRatio) / this.renderHeight;
 
         this.GUICanvasContext.setTransform(
             scaleX, 0,
@@ -45,6 +48,7 @@ export class CanvasManager extends Manager {
             0, 0
         );
     }
+
 
     fix_canvas(canvas, zIndex) {
         canvas.style.position = 'fixed';
@@ -73,6 +77,8 @@ export class CanvasManager extends Manager {
             canvas: this.RenderCanvas,
             antialias: true
         });
+
+        this.engine.renderer.toneMapping = THREE.ACESFilmicToneMapping;
 
         this.fix_canvas(this.engine.RenderCanvas, 0);
         this.fix_canvas(this.engine.GUICanvas, 1);

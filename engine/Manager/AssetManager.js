@@ -7,7 +7,7 @@ import * as THREE from "../../../libs/three.module.js"
 export class AssetManager extends Manager {
     constructor(engine) {
         super(engine);
-        
+
         this.engine = engine;
 
         this.textureLoader = new THREE.TextureLoader();
@@ -19,7 +19,7 @@ export class AssetManager extends Manager {
         this.totalAssets = this.engine.assetList.getAssets().length;
         this.loadedAssets = 0;
     }
-    
+
     async loadAssets() {
         this.totalAssets = this.engine.assetList.getAssets().length;
         this.loadedAssets = 0;
@@ -48,7 +48,7 @@ export class AssetManager extends Manager {
                         onProgress(asset);
                         resolve();
                     }, undefined, reject);
-                } else if (asset.type === "rgbe") {
+                } else if (asset.type === "hdri") {
                     this.rgbeLoader.load(asset.src, (data) => {
                         asset.data = data;
                         onProgress(asset);

@@ -24,8 +24,13 @@ export class AssetList {
         return this.assets.filter(asset => asset.type === type);
     }
 
-    getAssetByName(name) {
-        return this.assets.find(asset => asset.name === name);
+    getAssetByName(name, type = null) {
+        return this.assets.find(asset => {
+            if (type) {
+                return asset.name === name && asset.type === type;
+            }
+            return asset.name === name;
+        });
     }
 
     getAssetBySrc(src) {

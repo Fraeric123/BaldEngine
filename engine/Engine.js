@@ -29,6 +29,8 @@ export class Engine {
     }
 
     async init() {
+        this.canvasManager.init();
+
         await this.assetManager.loadAssets();
 
         this.world.init(this);
@@ -36,7 +38,7 @@ export class Engine {
         this.worldUpdates = true;
         this.worldRender = true;
 
-        this.canvasManager.init();
+        this.canvasManager.resize();
 
         requestAnimationFrame(this.loop.bind(this));
     }
